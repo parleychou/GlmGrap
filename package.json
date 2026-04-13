@@ -1,0 +1,14 @@
+{
+  "name": "grab-glm-pro",
+  "version": "1.0.0",
+  "description": "GLM Coding Pro 连续包年套餐自动抢购脚本",
+  "main": "grab_glm_pro.js",
+  "scripts": {
+    "start": "node grab_glm_pro.js",
+    "quick": "node grab_glm_pro.js --quick"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "puppeteer-core": "^24.0.0"
+  }
+}
