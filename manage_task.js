@@ -8,7 +8,8 @@ const batPath = path.join(__dirname, 'run.bat');
 
 if (mode === 'register') {
     // 创建一个 run.bat 供计划任务调用，从而确保能够处于正确的执行目录
-    const batContent = `@echo off\r\ncd /d "%~dp0"\r\nnode grab_glm_pro.js\r\n`;
+    // 默认执行包年 (annual) 专业版 (pro) 套餐
+    const batContent = `@echo off\r\ncd /d "%~dp0"\r\nnode grab_glm_pro.js --cycle=annual --tier=pro\r\npause\r\n`;
     fs.writeFileSync(batPath, batContent, 'utf8');
     console.log('✅ 已生成辅助执行脚本: run.bat');
 
