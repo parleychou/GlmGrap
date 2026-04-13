@@ -3,6 +3,8 @@
 Automated Puppeteer script for grabbing GLM Coding Pro yearly subscriptions precisely at 10:00 AM. 
 **[中文说明在下方 / Chinese version below](#中文说明)**
 
+![GLM Coding Pro Dashboard](assets/demo.png)
+
 ## Features
 - Headless / Non-headless Chromium automation
 - Auto-login natively with credentials from `.env`
