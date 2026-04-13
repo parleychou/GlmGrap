@@ -78,4 +78,15 @@ node grab_glm_pro.js --cycle=annual --tier=pro
 node grab_glm_pro.js --quick --cycle=monthly --tier=max
 ```
 
+**系统级定时任务指引 (Windows)**
+如果你觉得每天打开终端太麻烦，你可以将该脚本注册为 Windows 系统级的每日自动计划任务。
+```sh
+# 注册任务，系统会在每天 09:50 自动弹出系统终端执行挂机抢购程序
+npm run task:register
+
+# 取消注册该系统任务
+npm run task:unregister
+```
+> **提示:** 如果在注册遇到“拒绝访问”相关的错误，请以**管理员身份**打开 PowerShell/CMD 再执行注册命令。
+
 > **注意：** 当日志返回 `🎉 支付页面出现！抢购成功！` 并输出 `04_success.png` 截图时，请立即手动进入跳跃出的 Chrome 支付窗口用微信并支付宝完成订阅扣费。

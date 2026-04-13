@@ -5,7 +5,9 @@
   "main": "grab_glm_pro.js",
   "scripts": {
     "start": "node grab_glm_pro.js",
-    "quick": "node grab_glm_pro.js --quick"
+    "quick": "node grab_glm_pro.js --quick",
+    "task:register": "node manage_task.js register",
+    "task:unregister": "node manage_task.js unregister"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
