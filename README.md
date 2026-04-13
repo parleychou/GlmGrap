@@ -24,17 +24,28 @@ GLM_PHONE=12345678910
 GLM_PASSWORD=your_password
 ```
 
-## Running
-**Scheduled Execution** (Starts waiting until 9:55 AM)
-```sh
-node grab_glm_pro.js --cycle=annual --tier=pro
-```
-> `--cycle` can be: `monthly`, `quarterly`, `annual` (default: `annual`)
-> `--tier` can be: `lite` (1st option), `pro` (2nd option), `max` (3rd option) (default: `pro`)
+## CLI Parameters
+You can append the following parameters to the script:
+- `--quick` or `-q`: Run immediately, bypassing the wait-for-10AM logic.
+- `--cycle=<value>`: Choose the subscription duration.
+  - `monthly` (Monthly)
+  - `quarterly` (Quarterly)
+  - `annual` (Annually - Default)
+- `--tier=<value>`: Choose the subscription type.
+  - `lite` (Basic / 1st option)
+  - `pro` (Professional / 2nd option - Default)
+  - `max` (Ultimate / 3rd option)
 
-**Quick Execution** (Skips time wait, grabs immediately)
+### Examples
 ```sh
+# Default: Scheduled grab for Annual Professional edition
+node grab_glm_pro.js
+
+# Instant grab for Monthly Lite edition
 node grab_glm_pro.js --quick --cycle=monthly --tier=lite
+
+# Scheduled grab for Quarterly Max edition
+node grab_glm_pro.js --cycle=quarterly --tier=max
 ```
 
 ---
@@ -61,21 +72,32 @@ GLM_PHONE=你的手机号
 GLM_PASSWORD=你的密码
 ```
 
-## 启动指南
+## 核心启动参数
+任何启动模式都可以搭配自由组合的传参，用于精确指定你要抢购的具体规格：
 
-**定时挂机模式（推荐）**
-如果你在 10 点前启动（比如 9 点 40 分），可以直接跑该命令，它会在后台静默待命，等到 9:55 触发自动登录并在 10:00 毫秒级重载。
-```sh
-node grab_glm_pro.js --cycle=annual --tier=pro
-```
-> 支持配置套餐选项：
-> `--cycle` 订阅周期配置: `monthly` (包月), `quarterly` (包季), `annual` (包年 - 默认)
-> `--tier` 套餐档次配置: `lite` (基础版), `pro` (专业版 - 默认), `max` (旗舰版)
+* `--quick` 或 `-q` : 开启**快速实测模式**，跳过定时等待，立马开抢（适合补漏或测网）。
+* `--cycle=<周期>` : 订阅时长。可选值：
+  * `monthly` : 连续包月
+  * `quarterly` : 连续包季
+  * `annual` : 连续包年 **(默认值)**
+* `--tier=<档次>` : 订阅类型。可选值：
+  * `lite` : 基础版 (第1个按钮)
+  * `pro` : 专业版 (第2个按钮) **(默认值)**
+  * `max` : 旗舰版 (第3个按钮)
 
-**快速实测模式**
-想忽略自动等待系统验证完整的购买按键逻辑（适用于补漏或者测试网络）。
+### 常用命令组合示例
 ```sh
-node grab_glm_pro.js --quick --cycle=monthly --tier=max
+# [推荐] 默认定时模式：等待到 10:00 抢购【连续包年 - 专业版 (Pro)】
+node grab_glm_pro.js
+
+# 测试模式：立刻开始抢购【连续包季 - 基础版 (Lite)】
+node grab_glm_pro.js --quick --cycle=quarterly --tier=lite
+
+# 定时模式：等待到 10:00 抢购【连续包月 - 旗舰版 (Max)】
+node grab_glm_pro.js --cycle=monthly --tier=max
+
+# 测试模式：立刻开始抢购【连续包年 - 旗舰版 (Max)】
+node grab_glm_pro.js --quick --cycle=annual --tier=max
 ```
 
 **系统级定时任务指引 (Windows)**
