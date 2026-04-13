@@ -9,6 +9,21 @@ const puppeteer = require('puppeteer-core');
 const path = require('path');
 const fs = require('fs');
 
+const args = process.argv.slice(2);
+const cycleArg = args.find(a => a.startsWith('--cycle='))?.split('=')[1] || 'annual';
+const tierArg = args.find(a => a.startsWith('--tier='))?.split('=')[1] || 'pro';
+
+const CYCLE_MAP = {
+    'monthly': '连续包月',
+    'quarterly': '连续包季',
+    'annual': '连续包年'
+};
+const TIER_MAP = {
+    'lite': 0,
+    'pro': 1,
+    'max': 2
+};
+
 const CONFIG = {
     chromePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     targetUrl: 'https://open.bigmodel.cn/glm-coding',
@@ -22,6 +37,8 @@ const CONFIG = {
     maxRefreshes: 200,       // 最大刷新次数
     refreshCooldown: 1500,   // 刷新后等待 ms
     screenshotDir: path.join(__dirname, 'screenshots'),
+    targetCycle: CYCLE_MAP[cycleArg] || '连续包年',
+    targetTierIndex: TIER_MAP[tierArg] ?? 1,
 };
 
 function getTimeStr() {
@@ -148,11 +165,15 @@ async function setupPage(page) {
             if (h) { const r = h.getBoundingClientRect(); window.scrollTo({ top: window.scrollY + r.top - 50, behavior: 'instant' }); }
         });
         await sleep(300);
-        await page.evaluate(() => {
+        await page.evaluate((targetCycle) => {
             for (const el of document.querySelectorAll('*')) {
-                if (el.textContent.trim().startsWith('连续包年') && el.children.length <= 2) { el.click(); return; }
+                if (el.textContent.trim() === targetCycle && el.children.length === 0) { el.click(); return; }
             }
-        });
+            // fallback
+            for (const el of document.querySelectorAll('*')) {
+                if (el.textContent.trim().startsWith(targetCycle) && el.children.length <= 2 && el.tagName !== 'HTML' && el.tagName !== 'BODY') { el.click(); return; }
+            }
+        }, CONFIG.targetCycle);
         await sleep(300);
     } catch (e) {
         log(`  ⚠️ setupPage: ${e.message.substring(0, 50)}`);
@@ -214,7 +235,7 @@ async function grabWithRefresh(page) {
 
         while (batchClicks < batchMax && totalClicks < CONFIG.maxClicks) {
             try {
-                const result = await page.evaluate(() => {
+                const result = await page.evaluate((targetTierIndex) => {
                     // 先检查是否弹出了登录弹窗
                     const loginDialog = document.querySelector('.login-content');
                     if (loginDialog && loginDialog.offsetParent !== null) {
@@ -226,16 +247,13 @@ async function grabWithRefresh(page) {
                         const t = b.textContent.trim();
                         return t.includes('特惠订阅') || t.includes('暂时售罄') || t.includes('补货');
                     });
-                    if (cardBtns.length >= 2) {
-                        cardBtns[1].click();
-                        return { ok: true, text: cardBtns[1].textContent.trim().substring(0, 25) };
-                    }
-                    if (cardBtns.length === 1) {
-                        cardBtns[0].click();
-                        return { ok: true, text: cardBtns[0].textContent.trim().substring(0, 25) };
+                    if (cardBtns.length > 0) {
+                        const targetIdx = Math.min(cardBtns.length - 1, targetTierIndex);
+                        cardBtns[targetIdx].click();
+                        return { ok: true, text: cardBtns[targetIdx].textContent.trim().substring(0, 25) };
                     }
                     return { ok: false };
-                });
+                }, CONFIG.targetTierIndex);
 
                 totalClicks++;
                 batchClicks++;
@@ -311,7 +329,7 @@ async function grabWithRefresh(page) {
 
 // ===== 主流程 =====
 async function main() {
-    log('🚀 GLM Coding Pro 连续包年抢购脚本 v3（定时模式）');
+    log(`🚀 GLM Coding Pro ${CONFIG.targetCycle} 抢购脚本 v3（定时模式）`);
     log('=========================================');
     if (!CONFIG.phone || !CONFIG.password) { log('❌ 缺少 .env 配置'); process.exit(1); }
     if (!fs.existsSync(CONFIG.screenshotDir)) fs.mkdirSync(CONFIG.screenshotDir, { recursive: true });
@@ -325,7 +343,7 @@ async function main() {
 
     await waitUntil(CONFIG.loginHour, CONFIG.loginMinute);
     log('📄 打开页面...');
-    await page.goto(CONFIG.targetUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+    await page.goto(CONFIG.targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await autoLogin(page);
     await page.screenshot({ path: path.join(CONFIG.screenshotDir, '02_logged_in.png') });
 
@@ -345,7 +363,7 @@ async function main() {
 
 // ===== 快速模式 =====
 async function quickMode() {
-    log('🚀 快速模式 v3 - 立即开始（带自动刷新）');
+    log(`🚀 快速模式 v3 - 立即开始（带自动刷新） - 抢购: ${CONFIG.targetCycle}`);
     log('=========================================');
     if (!CONFIG.phone || !CONFIG.password) { log('❌ 缺少 .env 配置'); process.exit(1); }
     if (!fs.existsSync(CONFIG.screenshotDir)) fs.mkdirSync(CONFIG.screenshotDir, { recursive: true });

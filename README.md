@@ -27,11 +27,14 @@ GLM_PASSWORD=your_password
 ## Running
 **Scheduled Execution** (Starts waiting until 9:55 AM)
 ```sh
-node grab_glm_pro.js
+node grab_glm_pro.js --cycle=annual --tier=pro
 ```
+> `--cycle` can be: `monthly`, `quarterly`, `annual` (default: `annual`)
+> `--tier` can be: `lite` (1st option), `pro` (2nd option), `max` (3rd option) (default: `pro`)
+
 **Quick Execution** (Skips time wait, grabs immediately)
 ```sh
-node grab_glm_pro.js --quick
+node grab_glm_pro.js --quick --cycle=monthly --tier=lite
 ```
 
 ---
@@ -63,13 +66,16 @@ GLM_PASSWORD=你的密码
 **定时挂机模式（推荐）**
 如果你在 10 点前启动（比如 9 点 40 分），可以直接跑该命令，它会在后台静默待命，等到 9:55 触发自动登录并在 10:00 毫秒级重载。
 ```sh
-node grab_glm_pro.js
+node grab_glm_pro.js --cycle=annual --tier=pro
 ```
+> 支持配置套餐选项：
+> `--cycle` 订阅周期配置: `monthly` (包月), `quarterly` (包季), `annual` (包年 - 默认)
+> `--tier` 套餐档次配置: `lite` (基础版), `pro` (专业版 - 默认), `max` (旗舰版)
 
 **快速实测模式**
 想忽略自动等待系统验证完整的购买按键逻辑（适用于补漏或者测试网络）。
 ```sh
-node grab_glm_pro.js --quick
+node grab_glm_pro.js --quick --cycle=monthly --tier=max
 ```
 
 > **注意：** 当日志返回 `🎉 支付页面出现！抢购成功！` 并输出 `04_success.png` 截图时，请立即手动进入跳跃出的 Chrome 支付窗口用微信并支付宝完成订阅扣费。
