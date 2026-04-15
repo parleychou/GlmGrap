@@ -38,9 +38,9 @@ const CONFIG = {
     loginHour: 9, loginMinute: 55,
     prepareHour: 9, prepareMinute: 59, prepareSecond: 50,
     grabHour: 10, grabMinute: 0, grabSecond: 0,
+    grabEndHour: 10, grabEndMinute: 20, // 持续尝试直到此时间
     clickInterval: 50,
-    maxClicks: 10000,
-    maxRefreshes: 200,       // 最大刷新次数
+    maxClicks: 50000,
     refreshCooldown: 1500,   // 刷新后等待 ms
     screenshotDir: path.join(__dirname, 'screenshots'),
     targetCycle: CYCLE_MAP[cycleArg] || '连续包年',
@@ -279,14 +279,17 @@ async function setupPage(page) {
 
 // ===== 核心抢购循环（带自动刷新） =====
 async function grabWithRefresh(page) {
-    log('🔥🔥🔥 开始抢购（带自动刷新）！ 🔥🔥🔥');
+    log(`🔥🔥🔥 开始抢购（带自动刷新，持续到 ${String(CONFIG.grabEndHour).padStart(2,'0')}:${String(CONFIG.grabEndMinute).padStart(2,'0')}）！ 🔥🔥🔥`);
 
     let totalClicks = 0;
     let refreshCount = 0;
     let grabbed = false;
     const startTime = Date.now();
+    
+    const endTime = new Date();
+    endTime.setHours(CONFIG.grabEndHour, CONFIG.grabEndMinute, 0, 0);
 
-    while (!grabbed && refreshCount < CONFIG.maxRefreshes && totalClicks < CONFIG.maxClicks) {
+    while (!grabbed && new Date() < endTime && totalClicks < CONFIG.maxClicks) {
         // 检查页面是否有"访问人数较多"或页面不正常
         const pageStatus = await page.evaluate(() => {
             const text = document.body?.innerText || '';
