@@ -1,7 +1,11 @@
 /**
- * GLM Coding Pro 连续包年套餐 - 自动抢购脚本 v3
+ * GLM Coding Pro 连续包年套餐 - 自动抢购脚本 v4
  * 
- * 核心改进: 遇到"访问人数较多"时自动刷新重试
+ * v4 改进:
+ *   - 适配新版 UI（右上角用户图标下拉菜单取代"登录/注册"按钮）
+ *   - 登录检测改为检查 .user-dropdown-menu 中是否含"退出登录"
+ *   - 登录流程改为点击用户图标触发 SSO 跳转，再用 page.goto 直接登录页填写
+ *   - 抢购按钮文字适配"暂时售罄"/"补货"/"特惠订阅"/"继续订阅"
  */
 
 require('dotenv').config();
@@ -26,7 +30,9 @@ const TIER_MAP = {
 
 const CONFIG = {
     chromePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    userDataDir: path.join(__dirname, '.chrome-profile'),  // 持久化 cookie
     targetUrl: 'https://open.bigmodel.cn/glm-coding',
+    loginUrl: 'https://open.bigmodel.cn/login',
     phone: process.env.GLM_PHONE,
     password: process.env.GLM_PASSWORD,
     loginHour: 9, loginMinute: 55,
@@ -65,84 +71,175 @@ async function waitUntil(hour, minute, second = 0) {
     while (new Date() < target) {}
 }
 
-// ===== 检查是否已登录 =====
+// ===== 检查是否已登录（新版 UI） =====
 async function isLoggedIn(page) {
     return page.evaluate(() => {
-        // 如果右上角没有"登录 / 注册"按钮，说明已登录
+        // 方式1: 检查用户下拉菜单中是否有"退出登录"
+        const menu = document.querySelector('.user-dropdown-menu');
+        if (menu && menu.innerText.includes('退出登录')) return true;
+
+        // 方式2: 检查用户头像图标区域是否存在
+        const userAction = document.querySelector('.user-action');
+        if (userAction) {
+            const dropdown = userAction.querySelector('.el-dropdown');
+            if (dropdown) return true;
+        }
+
+        // 方式3: 检查是否有"控制台"链接（已登录才显示）
+        const links = document.querySelectorAll('a');
+        for (const a of links) {
+            if (a.textContent.includes('控制台') && a.href && a.href.includes('overview')) return true;
+        }
+
+        // 旧版兼容: 如果有"登录 / 注册"按钮说明未登录
         const btns = document.querySelectorAll('button');
         for (const b of btns) {
-            if (b.textContent.includes('登录 / 注册')) return false;
+            if (b.textContent.includes('登录') && b.textContent.includes('注册')) return false;
         }
+
+        // 默认认为已登录（保守策略，避免误判）
         return true;
     }).catch(() => false);
 }
 
-// ===== 执行一次登录操作 =====
-async function doLoginOnce(page) {
-    // 1. 点击"登录 / 注册"
-    const clicked = await page.evaluate(() => {
-        const btns = document.querySelectorAll('button');
-        for (const b of btns) {
-            if (b.textContent.includes('登录') && b.textContent.includes('注册')) {
-                b.click(); return true;
-            }
-        }
-        return false;
-    });
-    if (!clicked) return true; // 没找到按钮 = 已登录
+// ===== 执行登录操作 =====
+async function doLogin(page) {
+    log('🔐 尝试通过 SSO 页面登录...');
 
+    // 直接导航到登录页
+    try {
+        await page.goto(CONFIG.loginUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    } catch(e) {
+        log(`  ⚠️ 导航到登录页超时: ${e.message.substring(0, 50)}`);
+    }
     await sleep(2000);
 
-    // 2. 切换到"账号登录" tab
-    await page.evaluate(() => { document.querySelector('#tab-password')?.click(); });
+    // 检查是否已经跳转到了已登录页面
+    if (page.url().includes('overview') || page.url().includes('console')) {
+        log('✅ 已自动登录（cookie 有效）');
+        return true;
+    }
+
+    // 尝试切换到"账号登录" tab
+    await page.evaluate(() => {
+        const tabs = document.querySelectorAll('[id*="tab-password"], [role="tab"]');
+        for (const t of tabs) {
+            if (t.textContent.includes('账号') || t.id === 'tab-password') {
+                t.click();
+                return;
+            }
+        }
+    });
     await sleep(1000);
 
-    // 3. 填入凭据
-    await page.evaluate((phone, pwd) => {
-        const dialog = document.querySelector('.login-content .el-dialog__body');
-        if (!dialog) return;
+    // 填入凭据 - 多种选择器兼容
+    const filled = await page.evaluate((phone, pwd) => {
         const nativeSet = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-        const phoneInput = dialog.querySelector('input[placeholder="请输入用户名/邮箱/手机号"]');
-        if (phoneInput) { phoneInput.focus(); nativeSet.call(phoneInput, phone); phoneInput.dispatchEvent(new Event('input', { bubbles: true })); }
-        const pwdInput = dialog.querySelector('input[type="password"]');
-        if (pwdInput) { pwdInput.focus(); nativeSet.call(pwdInput, pwd); pwdInput.dispatchEvent(new Event('input', { bubbles: true })); }
+
+        // 尝试多种选择器找到手机号输入框
+        const phoneSelectors = [
+            'input[placeholder*="手机号"]',
+            'input[placeholder*="用户名"]',
+            'input[placeholder*="邮箱"]',
+            'input[type="text"]:not([type="password"])',
+            'input[name="phone"]',
+            'input[name="username"]',
+        ];
+        let phoneInput = null;
+        for (const sel of phoneSelectors) {
+            const inputs = document.querySelectorAll(sel);
+            for (const inp of inputs) {
+                if (inp.offsetParent !== null) { phoneInput = inp; break; }
+            }
+            if (phoneInput) break;
+        }
+
+        // 尝试多种选择器找到密码输入框
+        const pwdSelectors = [
+            'input[type="password"]',
+            'input[placeholder*="密码"]',
+            'input[name="password"]',
+        ];
+        let pwdInput = null;
+        for (const sel of pwdSelectors) {
+            const inputs = document.querySelectorAll(sel);
+            for (const inp of inputs) {
+                if (inp.offsetParent !== null) { pwdInput = inp; break; }
+            }
+            if (pwdInput) break;
+        }
+
+        if (!phoneInput || !pwdInput) {
+            return { ok: false, reason: `phone=${!!phoneInput}, pwd=${!!pwdInput}` };
+        }
+
+        phoneInput.focus();
+        nativeSet.call(phoneInput, phone);
+        phoneInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+        pwdInput.focus();
+        nativeSet.call(pwdInput, pwd);
+        pwdInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+        return { ok: true };
     }, CONFIG.phone, CONFIG.password);
+
+    if (!filled.ok) {
+        log(`  ⚠️ 找不到输入框: ${filled.reason}`);
+        // 截图用于调试
+        await page.screenshot({ path: path.join(CONFIG.screenshotDir, 'debug_login_fail.png') });
+        return false;
+    }
     await sleep(500);
 
-    // 4. 点击登录
+    // 点击登录按钮
     await page.evaluate(() => {
-        const dialog = document.querySelector('.login-content .el-dialog__body');
-        if (!dialog) return;
-        const btns = dialog.querySelectorAll('button');
-        for (const b of btns) { if (b.textContent.trim() === '登录' && b.classList.contains('login-btn')) { b.click(); return; } }
+        const btns = document.querySelectorAll('button');
+        for (const b of btns) {
+            const t = b.textContent.trim();
+            if ((t === '登录' || t === '登 录') && !b.disabled) {
+                b.click();
+                return true;
+            }
+        }
+        // 兼容: 查找 class 含 login-btn 的按钮
+        const loginBtn = document.querySelector('.login-btn, [class*="login-btn"]');
+        if (loginBtn) { loginBtn.click(); return true; }
+        return false;
     });
 
-    // 5. 等待页面变化（登录成功后页面可能刷新）
+    // 等待页面变化
     await sleep(3000);
     try {
-        await page.waitForNavigation({ timeout: 5000, waitUntil: 'domcontentloaded' }).catch(() => {});
+        await page.waitForNavigation({ timeout: 8000, waitUntil: 'domcontentloaded' }).catch(() => {});
     } catch(e) {}
     await sleep(1000);
 
-    return isLoggedIn(page);
+    return true;
 }
 
 // ===== 自动登录（带重试） =====
 async function autoLogin(page) {
-    log('🔐 开始自动登录...');
+    log('🔐 检查登录状态...');
 
     if (await isLoggedIn(page)) { log('✅ 已登录'); return true; }
 
     for (let attempt = 1; attempt <= 3; attempt++) {
         log(`📋 登录尝试 ${attempt}/3...`);
-        const ok = await doLoginOnce(page);
-        if (ok) { log('✅ 登录成功！'); return true; }
-        log(`  ⚠️ 第 ${attempt} 次登录未成功`);
-        // 刷新页面重试
-        if (attempt < 3) {
-            await page.reload({ waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
-            await sleep(2000);
+        await doLogin(page);
+
+        // 回到目标页面检查登录状态
+        try {
+            await page.goto(CONFIG.targetUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+        } catch(e) {}
+        await sleep(2000);
+
+        if (await isLoggedIn(page)) {
+            log('✅ 登录成功！');
+            return true;
         }
+        log(`  ⚠️ 第 ${attempt} 次登录未成功`);
+        await sleep(2000);
     }
     log('❌ 3次登录均失败');
     return false;
@@ -157,7 +254,7 @@ async function dismissLoginDialog(page) {
     }).catch(() => false);
 }
 
-// ===== 准备页面（滚动+切换连续包年） =====
+// ===== 准备页面（滚动+切换套餐周期） =====
 async function setupPage(page) {
     try {
         await page.evaluate(() => {
@@ -199,7 +296,7 @@ async function grabWithRefresh(page) {
             const btns = Array.from(document.querySelectorAll('button'));
             const hasSubscribe = btns.some(b => {
                 const t = b.textContent.trim();
-                return t.includes('特惠订阅') || t.includes('暂时售罄') || t.includes('补货');
+                return t.includes('特惠订阅') || t.includes('暂时售罄') || t.includes('补货') || t.includes('继续订阅') || t.includes('即刻订阅');
             });
             if (hasSubscribe) return 'ready';
             if (text.includes('微信支付') || text.includes('支付宝') || text.includes('确认订阅') || text.includes('支付金额')) {
@@ -242,15 +339,22 @@ async function grabWithRefresh(page) {
                         return { ok: false, loginPopup: true };
                     }
 
+                    // 查找购买按钮（适配新旧版本）
                     const btns = Array.from(document.querySelectorAll('button'));
                     const cardBtns = btns.filter(b => {
                         const t = b.textContent.trim();
-                        return t.includes('特惠订阅') || t.includes('暂时售罄') || t.includes('补货');
+                        return t.includes('特惠订阅') || t.includes('暂时售罄') || t.includes('补货') || t.includes('继续订阅');
                     });
                     if (cardBtns.length > 0) {
                         const targetIdx = Math.min(cardBtns.length - 1, targetTierIndex);
-                        cardBtns[targetIdx].click();
-                        return { ok: true, text: cardBtns[targetIdx].textContent.trim().substring(0, 25) };
+                        const btn = cardBtns[targetIdx];
+                        // 尝试强制启用 disabled 按钮
+                        if (btn.disabled) {
+                            btn.disabled = false;
+                            btn.classList.remove('is-disabled', 'disabled');
+                        }
+                        btn.click();
+                        return { ok: true, text: btn.textContent.trim().substring(0, 35), disabled: btn.disabled };
                     }
                     return { ok: false };
                 }, CONFIG.targetTierIndex);
@@ -261,8 +365,35 @@ async function grabWithRefresh(page) {
                 // 如果弹出了登录框，说明未登录，需要先登录
                 if (result.loginPopup) {
                     log('  🔐 检测到登录弹窗，自动登录...');
-                    await doLoginOnce(page);
-                    await sleep(1000);
+                    // 尝试在弹窗内直接登录
+                    await page.evaluate((phone, pwd) => {
+                        const dialog = document.querySelector('.login-content .el-dialog__body') || document.querySelector('.login-content');
+                        if (!dialog) return;
+                        const nativeSet = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                        const phoneInput = dialog.querySelector('input[placeholder*="手机号"], input[placeholder*="用户名"], input[type="text"]');
+                        if (phoneInput) { phoneInput.focus(); nativeSet.call(phoneInput, phone); phoneInput.dispatchEvent(new Event('input', { bubbles: true })); }
+                        const pwdInput = dialog.querySelector('input[type="password"]');
+                        if (pwdInput) { pwdInput.focus(); nativeSet.call(pwdInput, pwd); pwdInput.dispatchEvent(new Event('input', { bubbles: true })); }
+                    }, CONFIG.phone, CONFIG.password);
+                    await sleep(500);
+                    // 切换到账号登录 tab（如果有）
+                    await page.evaluate(() => {
+                        const tab = document.querySelector('#tab-password');
+                        if (tab) tab.click();
+                    });
+                    await sleep(500);
+                    // 点登录
+                    await page.evaluate(() => {
+                        const dialog = document.querySelector('.login-content');
+                        if (!dialog) return;
+                        const btns = dialog.querySelectorAll('button');
+                        for (const b of btns) {
+                            if (b.textContent.trim() === '登录' || b.classList.contains('login-btn')) {
+                                b.click(); return;
+                            }
+                        }
+                    });
+                    await sleep(3000);
                     await setupPage(page);
                     break;
                 }
@@ -329,13 +460,14 @@ async function grabWithRefresh(page) {
 
 // ===== 主流程 =====
 async function main() {
-    log(`🚀 GLM Coding Pro ${CONFIG.targetCycle} 抢购脚本 v3（定时模式）`);
+    log(`🚀 GLM Coding Pro ${CONFIG.targetCycle} 抢购脚本 v4（定时模式）`);
     log('=========================================');
     if (!CONFIG.phone || !CONFIG.password) { log('❌ 缺少 .env 配置'); process.exit(1); }
     if (!fs.existsSync(CONFIG.screenshotDir)) fs.mkdirSync(CONFIG.screenshotDir, { recursive: true });
 
     const browser = await puppeteer.launch({
         executablePath: CONFIG.chromePath, headless: false, defaultViewport: null,
+        userDataDir: CONFIG.userDataDir,
         args: ['--start-maximized', '--disable-blink-features=AutomationControlled'],
     });
     const page = (await browser.pages())[0] || await browser.newPage();
@@ -344,6 +476,7 @@ async function main() {
     await waitUntil(CONFIG.loginHour, CONFIG.loginMinute);
     log('📄 打开页面...');
     await page.goto(CONFIG.targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await sleep(2000);
     await autoLogin(page);
     await page.screenshot({ path: path.join(CONFIG.screenshotDir, '02_logged_in.png') });
 
@@ -363,13 +496,14 @@ async function main() {
 
 // ===== 快速模式 =====
 async function quickMode() {
-    log(`🚀 快速模式 v3 - 立即开始（带自动刷新） - 抢购: ${CONFIG.targetCycle}`);
+    log(`🚀 快速模式 v4 - 立即开始（带自动刷新） - 抢购: ${CONFIG.targetCycle}`);
     log('=========================================');
     if (!CONFIG.phone || !CONFIG.password) { log('❌ 缺少 .env 配置'); process.exit(1); }
     if (!fs.existsSync(CONFIG.screenshotDir)) fs.mkdirSync(CONFIG.screenshotDir, { recursive: true });
 
     const browser = await puppeteer.launch({
         executablePath: CONFIG.chromePath, headless: false, defaultViewport: null,
+        userDataDir: CONFIG.userDataDir,
         args: ['--start-maximized', '--disable-blink-features=AutomationControlled'],
     });
     const page = (await browser.pages())[0] || await browser.newPage();
@@ -377,6 +511,7 @@ async function quickMode() {
 
     log('📄 打开页面...');
     await page.goto(CONFIG.targetUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+    await sleep(2000);
     await autoLogin(page);
     await sleep(1000);
     await setupPage(page);

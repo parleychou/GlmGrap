@@ -3,3 +3,5 @@ node_modules/
 screenshots/
 .DS_Store
 package-lock.json
+.chrome-profile/
+page_dump.html
