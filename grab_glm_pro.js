@@ -260,6 +260,16 @@ async function setupPage(page) {
         await page.evaluate(() => {
             const h = Array.from(document.querySelectorAll('h3')).find(h => h.textContent.includes('Coding') && h.textContent.includes('GLM'));
             if (h) { const r = h.getBoundingClientRect(); window.scrollTo({ top: window.scrollY + r.top - 50, behavior: 'instant' }); }
+            else {
+                const btns = Array.from(document.querySelectorAll('button')).filter(b => {
+                    const t = b.textContent.trim();
+                    return t.includes('特惠订阅') || t.includes('暂时售罄') || t.includes('补货') || t.includes('继续订阅') || t.includes('即刻订阅');
+                });
+                if (btns.length > 0) {
+                    const r = btns[0].getBoundingClientRect(); 
+                    window.scrollTo({ top: window.scrollY + r.top - 150, behavior: 'instant' });
+                }
+            }
         });
         await sleep(300);
         await page.evaluate((targetCycle) => {
@@ -320,9 +330,9 @@ async function grabWithRefresh(page) {
                 log(`🔄 页面状态: ${pageStatus}，第 ${refreshCount} 次刷新...`);
             }
             try {
-                await page.reload({ waitUntil: 'domcontentloaded', timeout: 8000 });
+                await page.goto(CONFIG.targetUrl, { waitUntil: 'domcontentloaded', timeout: 8000 });
             } catch (e) {
-                // reload timeout, continue anyway
+                // goto timeout, continue anyway
             }
             await sleep(CONFIG.refreshCooldown);
             await setupPage(page);
