@@ -287,6 +287,137 @@ async function setupPage(page) {
     }
 }
 
+// ===== 自动识别验证码 (Nvidia Minimax) =====
+async function autoSolveCaptcha(page) {
+    try {
+        log('🤖 启动大模型自动识别验证码...');
+        await sleep(1500); // 确保验证码动画展开且图片加载完成
+        
+        let targetText = '';
+        for (const frame of page.frames()) {
+            try {
+                const text = await frame.evaluate(() => {
+                    const bodyText = document.body?.innerText || '';
+                    const m = bodyText.match(/请依次点击[:：\s]*([^\n]+)/);
+                    return m ? m[1].trim() : '';
+                });
+                if (text) { targetText = text; break; }
+            } catch (e) {}
+        }
+        
+        if (!targetText) {
+            log('⚠️ 未提取到目标汉字，回退到手动模式');
+            return false;
+        }
+        log(`🎯 需要点击的汉字: ${targetText}`);
+        
+        const nvidiaBaseUrl = process.env.NVIDIA_BASE_URL;
+        const nvidiaApiKey = process.env.NVIDIA_API_KEY;
+        const nvidiaModel = process.env.NVIDIA_MODEL || "minimax/minimax-2.7";
+
+        if (!nvidiaApiKey || !nvidiaBaseUrl) {
+            log('⚠️ .env 文件中未配置 NVIDIA_API_KEY 或 NVIDIA_BASE_URL，回退到手动模式');
+            return false;
+        }
+
+        log(`📸 正在截取全页图...`);
+        const base64Img = await page.screenshot({ encoding: 'base64' });
+        
+        log(`🌐 请求 NVIDIA 视觉模型 (${nvidiaModel})...`);
+        const payload = {
+            model: nvidiaModel,
+            messages: [
+                {
+                    role: "user",
+                    content: [
+                        { type: "text", text: `这是一张网页截图，包含了一个安全验证弹窗。请在图片中找出“${targetText}”这几个字。请按顺序返回它们在图片中的绝对像素坐标（图片尺寸为原始尺寸）。必须返回 JSON 数组格式，例如 [{"x":500,"y":300}, {"x":550,"y":300}]，不带其他文本或 markdown。` },
+                        { type: "image_url", image_url: { url: `data:image/png;base64,${base64Img}` } }
+                    ]
+                }
+            ],
+            max_tokens: 200,
+            temperature: 0.1
+        };
+
+        let response;
+        try {
+            response = await fetch(`${nvidiaBaseUrl}/chat/completions`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${nvidiaApiKey}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+        } catch (e) {
+            log(`❌ Fetch 请求异常: ${e.message}。请确认 Node 版本支持 fetch。`);
+            return false;
+        }
+
+        if (!response.ok) {
+            const errTxt = await response.text();
+            log(`❌ API 请求失败: ${response.status} - ${errTxt.substring(0, 100)}`);
+            return false;
+        }
+
+        const data = await response.json();
+        const content = data.choices?.[0]?.message?.content;
+        if (!content) {
+            log('❌ 模型没有返回有效内容');
+            return false;
+        }
+        
+        log(`🤖 模型回复: ${content.substring(0, 100).replace(/\n/g, '')}...`);
+        
+        const match = content.match(/\[.*?\]/s);
+        if (!match) {
+            log('❌ 模型返回的不是合法的 JSON 坐标数组');
+            return false;
+        }
+        
+        const coords = JSON.parse(match[0]);
+        if (!Array.isArray(coords) || coords.length === 0) {
+            log('❌ 坐标数组解析失败或为空');
+            return false;
+        }
+        
+        log(`🖱️ 准备点击坐标: ${JSON.stringify(coords)}`);
+        for (const c of coords) {
+            await page.mouse.click(Number(c.x), Number(c.y), { delay: 30 });
+            await sleep(300 + Math.random() * 200);
+        }
+        
+        log('🖱️ 尝试点击“确定”按钮...');
+        for (const frame of page.frames()) {
+            try {
+                const clicked = await frame.evaluate(() => {
+                    const btns = document.querySelectorAll('.yidun_submit, [class*="submit"], button');
+                    for (const b of btns) {
+                        const txt = b.innerText?.trim();
+                        if ((txt === '确定' || txt === '提交' || txt === '确认') && b.offsetParent !== null) {
+                            b.click();
+                            return true;
+                        }
+                    }
+                    return false;
+                });
+                if (clicked) {
+                    log('✅ 已点击确定按钮');
+                    break;
+                }
+            } catch(e) {}
+        }
+        
+        log('⏳ 自动验证完成，等待页面响应...');
+        await sleep(2000);
+        return true;
+        
+    } catch (err) {
+        log(`❌ 自动处理验证码异常: ${err.message}`);
+        return false;
+    }
+}
+
 // ===== 核心抢购循环（带自动刷新） =====
 async function grabWithRefresh(page) {
     log(`🔥🔥🔥 开始抢购（带自动刷新，持续到 ${String(CONFIG.grabEndHour).padStart(2,'0')}:${String(CONFIG.grabEndMinute).padStart(2,'0')}）！ 🔥🔥🔥`);
@@ -345,6 +476,56 @@ async function grabWithRefresh(page) {
 
         while (batchClicks < batchMax && totalClicks < CONFIG.maxClicks) {
             try {
+                // ====== 检查是否弹出安全验证弹窗 ======
+                let hasCaptcha = false;
+                for (const frame of page.frames()) {
+                    try {
+                        const text = await frame.evaluate(() => document.body?.innerText || '');
+                        if (text.includes('请依次点击') || text.includes('安全验证') || text.includes('点击验证')) {
+                            hasCaptcha = true;
+                            break;
+                        }
+                    } catch (e) {}
+                }
+
+                if (hasCaptcha) {
+                    log('  ⚠️ 检测到安全验证弹窗！开始尝试自动验证...');
+                    const autoSolved = await autoSolveCaptcha(page);
+                    if (!autoSolved) {
+                        log('  ⚠️ 自动验证失败，请立即【手动】完成验证！(已暂停自动点击)');
+                    }
+
+                    // 循环等待直到验证弹窗消失或页面跳转
+                    while (true) {
+                        await sleep(1000);
+                        let stillHasCaptcha = false;
+                        for (const frame of page.frames()) {
+                            try {
+                                const text = await frame.evaluate(() => document.body?.innerText || '');
+                                if (text.includes('请依次点击') || text.includes('安全验证') || text.includes('点击验证')) {
+                                    stillHasCaptcha = true;
+                                    break;
+                                }
+                            } catch (e) {}
+                        }
+                        
+                        const url = page.url();
+                        if (!url.includes('glm-coding')) {
+                            log(`🎉 页面跳转: ${url}`);
+                            grabbed = true;
+                            break;
+                        }
+
+                        if (!stillHasCaptcha) {
+                            log('  ✅ 安全验证已关闭，恢复执行...');
+                            break;
+                        }
+                    }
+                    if (grabbed) break;
+                    continue;
+                }
+                // ======================================
+
                 const result = await page.evaluate((targetTierIndex) => {
                     // 先检查是否弹出了登录弹窗
                     const loginDialog = document.querySelector('.login-content');
